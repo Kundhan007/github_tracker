@@ -1,42 +1,95 @@
 document.getElementById('fetchButton').addEventListener('click', fetchCommits);
 
 async function fetchCommits() {
-    const username = document.getElementById('username').value;
     const logsDiv = document.getElementById('logs');
     const commitInfoDiv = document.getElementById('commitInfo');
-
+    const authTokenInput = document.getElementById('authToken');
+    
+    // GitHub API configuration
+    const owner = 'aipechu';
+    const repo = 'DocAssist';
+    const branch = 'doc-160';
+    const authToken = authTokenInput.value;
+    
+    if (!authToken) {
+        logMessage(logsDiv, 'Please enter a GitHub auth token');
+        return;
+    }
+    
     // Clear previous logs and commit info
     logsDiv.innerHTML = '';
     commitInfoDiv.innerHTML = '';
-
-    // Log the start of the fetch process
-    logMessage(logsDiv, 'Fetching commits for ' + username + '...');
+    
+    // Get start of current day in IST
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);  // Set to start of day in local timezone
+    const startOfDay = now.toISOString();  // Convert to ISO string for GitHub API
+    
+    logMessage(logsDiv, `Fetching today's commits for ${owner}/${repo} on branch ${branch}...`);
 
     try {
-        const today = new Date().toISOString().split('T')[0];
-        const response = await fetch(`https://api.github.com/search/commits?q=author:${username}+committer-date:${today}`);
-        const data = await response.json();
-
-        if (data.items && data.items.length > 0) {
-            logMessage(logsDiv, 'Commits found:');
+        // Fetch commits for the branch with since parameter
+        const response = await fetch(
+            `https://api.github.com/repos/${owner}/${repo}/commits?sha=${branch}&since=${startOfDay}`,
+            {
+                headers: {
+                    'Authorization': `Bearer ${authToken}`,
+                    'Accept': 'application/vnd.github.v3+json'
+                }
+            }
+        );
+        
+        const commits = await response.json();
+        
+        if (commits && commits.length > 0) {
+            logMessage(logsDiv, 'Today\'s Commits:');
             let totalLines = 0;
 
-            data.items.forEach(commit => {
-                const commitDate = new Date(commit.commit.committer.date).toLocaleString();
-                const commitMessage = commit.commit.message;
-                const additions = commit.stats.additions;
-                const deletions = commit.stats.deletions;
+            // Process each commit
+            for (const commit of commits) {
+                // Fetch detailed commit information
+                const detailResponse = await fetch(
+                    `https://api.github.com/repos/${owner}/${repo}/commits/${commit.sha}`,
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${authToken}`,
+                            'Accept': 'application/vnd.github.v3+json'
+                        }
+                    }
+                );
+                
+                const commitDetail = await detailResponse.json();
+                
+                const {
+                    stats,
+                    commit: { author, message }
+                } = commitDetail;
+                
+                // Simplified time conversion using local timezone
+                const commitDate = new Date(author.date);
+                const timeString = commitDate.toLocaleTimeString('en-IN', { 
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    hour12: true,
+                    timeZone: 'Asia/Kolkata'  // Explicitly set to IST
+                });
+                
+                const additions = stats?.additions || 0;
+                const deletions = stats?.deletions || 0;
                 const total = additions + deletions;
-
+                
                 totalLines += total;
 
-                logMessage(logsDiv, `Commit: ${commitMessage} (Date: ${commitDate}, Additions: ${additions}, Deletions: ${deletions}, Total: ${total})`);
-            });
+                logMessage(logsDiv, `${timeString} - ${message}\nLines changed: ${total}`);
+            }
 
-            commitInfoDiv.innerHTML = `<p>Total lines committed today: ${totalLines}</p>`;
+            commitInfoDiv.innerHTML = `
+                <p>Total lines changed today: ${totalLines}</p>
+                <p>Total commits today: ${commits.length}</p>
+            `;
         } else {
             logMessage(logsDiv, 'No commits found for today.');
-            commitInfoDiv.innerHTML = '<p>No commits today.</p>';
+            commitInfoDiv.innerHTML = '<p>No commits found for today.</p>';
         }
     } catch (error) {
         logMessage(logsDiv, 'Error fetching commits: ' + error.message);
